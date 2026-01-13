@@ -52,9 +52,11 @@ jobs:
                     - os: ubuntu-latest
                       platform: x86_64-linux
                       arch: x86_64
-                    - os: ubuntu-latest
-                      platform: aarch64-linux
-                      arch: aarch64
+                    # Note: aarch64-linux disabled due to lack of free aarch64 runners on GitHub Actions
+                    # Requires QEMU emulation or self-hosted runners which are complex/slow
+                    # - os: ubuntu-latest
+                    #   platform: aarch64-linux
+                    #   arch: aarch64
                     - os: macos-latest
                       platform: x86_64-darwin
                       arch: x86_64
