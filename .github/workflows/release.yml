@@ -3,6 +3,7 @@ name: Release
 on:
     push:
         branches: [main]
+    workflow_dispatch:
 
 jobs:
     release:
@@ -22,6 +23,7 @@ jobs:
               uses: actions/checkout@v4
               with:
                   token: ${{ secrets.PAT_TOKEN }}
+                  fetch-depth: 0
 
             - name: Setup Node.js
               uses: actions/setup-node@v4
@@ -58,7 +60,7 @@ jobs:
                     - os: macos-latest
                       platform: x86_64-darwin
                       arch: x86_64
-                    - os: macos-14 # macOS 14 supports aarch64 natively
+                    - os: macos-14
                       platform: aarch64-darwin
                       arch: aarch64
 
@@ -68,6 +70,7 @@ jobs:
               with:
                   token: ${{ secrets.PAT_TOKEN }}
                   ref: main
+                  fetch-depth: 0
 
             - name: Install Nix
               uses: cachix/install-nix-action@v26
@@ -174,6 +177,7 @@ jobs:
               with:
                   token: ${{ secrets.PAT_TOKEN }}
                   ref: main
+                  fetch-depth: 0
 
             - name: Install Nix
               uses: cachix/install-nix-action@v26
@@ -217,7 +221,7 @@ jobs:
                   done < combined_hashes.txt
 
                   # Validate the updated flake
-                  echo "🔍 Validating flake.nix syntax..."
+                  echo "🔍 Validating flake.nix..."
                   if ! nix flake check --no-build 2>&1; then
                     echo "❌ Flake validation failed"
                     echo "🔙 Restoring backup..."
