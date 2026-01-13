@@ -103,8 +103,15 @@ jobs:
                   VERSION="v${{ needs.release.outputs.new_release_version }}"
                   echo "🔨 Computing hash for platform: ${{ matrix.platform }}"
 
+                  # Detect OS and use appropriate sed syntax
+                  if [[ "$RUNNER_OS" == "macOS" ]]; then
+                    SED_INPLACE=(-i '')
+                  else
+                    SED_INPLACE=(-i)
+                  fi
+
                   # Update version
-                  sed -i "s/version = \".*\";/version = \"${VERSION}\";/" flake.nix
+                  sed "${SED_INPLACE[@]}" "s/version = \".*\";/version = \"${VERSION}\";/" flake.nix
                   echo "✅ Updated version to: $VERSION"
 
                   # Build to get correct hash
@@ -193,6 +200,13 @@ jobs:
                   VERSION="v${{ needs.release.outputs.new_release_version }}"
                   echo "📦 Updating flake.nix to version: $VERSION"
 
+                  # Detect OS and use appropriate sed syntax
+                  if [[ "$RUNNER_OS" == "macOS" ]]; then
+                    SED_INPLACE=(-i '')
+                  else
+                    SED_INPLACE=(-i)
+                  fi
+
                   # Backup current flake.nix
                   cp flake.nix flake.nix.backup
                   echo "💾 Created backup: flake.nix.backup"
@@ -206,13 +220,13 @@ jobs:
                   cat combined_hashes.txt
 
                   # Update version
-                  sed -i "s/version = \".*\";/version = \"${VERSION}\";/" flake.nix
+                  sed "${SED_INPLACE[@]}" "s/version = \".*\";/version = \"${VERSION}\";/" flake.nix
                   echo "✅ Updated version to: $VERSION"
 
                   # Update each platform's hash
                   while IFS='=' read -r platform hash; do
                     if [[ -n "$platform" && -n "$hash" ]]; then
-                      sed -i "s|${platform} = \"sha256-[^\"]*\";|${platform} = \"${hash}\";|" flake.nix
+                      sed "${SED_INPLACE[@]}" "s|${platform} = \"sha256-[^\"]*\";|${platform} = \"${hash}\";|" flake.nix
                       echo "✅ Updated hash for ${platform}"
                     fi
                   done < combined_hashes.txt
