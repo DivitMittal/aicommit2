@@ -45,7 +45,6 @@ jobs:
     compute-hashes:
         name: Compute Platform Hashes
         needs: release
-        if: needs.release.outputs.new_release_published == 'true'
         runs-on: ${{ matrix.os }}
         strategy:
             matrix:
@@ -165,7 +164,6 @@ jobs:
     update-nix:
         name: Update Nix Flake
         needs: [release, compute-hashes]
-        if: needs.release.outputs.new_release_published == 'true'
         runs-on: ubuntu-latest
         permissions:
             contents: write
