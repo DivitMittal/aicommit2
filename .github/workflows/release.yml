@@ -63,6 +63,12 @@ jobs:
                     - os: macos-14
                       platform: aarch64-darwin
                       arch: aarch64
+                    - os: macos-15-intel
+                      platform: x86_64-darwin
+                      arch: x86_64
+                    - os: macos-15-arm
+                      platform: aarch64-darwin
+                      arch: aarch64
 
         steps:
             - name: Checkout repository
