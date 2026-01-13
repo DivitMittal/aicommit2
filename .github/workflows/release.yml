@@ -71,9 +71,9 @@ jobs:
                   fetch-depth: 0
 
             - name: Install Nix
-              uses: cachix/install-nix-action@v26
+              uses: nixbuild/nix-quick-install-action@v30
               with:
-                  nix_path: nixpkgs=channel:nixos-unstable
+                  package: nixpkgs#channel:nixos-unstable
                   extra_nix_config: |
                       experimental-features = nix-command flakes
 
@@ -177,9 +177,9 @@ jobs:
                   fetch-depth: 0
 
             - name: Install Nix
-              uses: cachix/install-nix-action@v26
+              uses: nixbuild/nix-quick-install-action@v30
               with:
-                  nix_path: nixpkgs=channel:nixos-unstable
+                  package: nixpkgs#channel:nixos-unstable
                   extra_nix_config: |
                       experimental-features = nix-command flakes
 
