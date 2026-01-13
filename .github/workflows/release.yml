@@ -41,13 +41,26 @@ jobs:
                   GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
                   NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-    update-nix:
-        name: Update Nix Flake
+    compute-hashes:
+        name: Compute Platform Hashes
         needs: release
         if: needs.release.outputs.new_release_published == 'true'
-        runs-on: ubuntu-latest
-        permissions:
-            contents: write
+        runs-on: ${{ matrix.os }}
+        strategy:
+            matrix:
+                include:
+                    - os: ubuntu-latest
+                      platform: x86_64-linux
+                      arch: x86_64
+                    - os: ubuntu-latest
+                      platform: aarch64-linux
+                      arch: aarch64
+                    - os: macos-latest
+                      platform: x86_64-darwin
+                      arch: x86_64
+                    - os: macos-14 # macOS 14 supports aarch64 natively
+                      platform: aarch64-darwin
+                      arch: aarch64
 
         steps:
             - name: Checkout repository
@@ -60,6 +73,8 @@ jobs:
               uses: cachix/install-nix-action@v26
               with:
                   nix_path: nixpkgs=channel:nixos-unstable
+                  extra_nix_config: |
+                      experimental-features = nix-command flakes
 
             - name: Wait for NPM package availability
               run: |
@@ -82,7 +97,97 @@ jobs:
                   echo "❌ Package aicommit2@${VERSION} not available after $((MAX_ATTEMPTS * WAIT_SECONDS)) seconds"
                   exit 1
 
-            - name: Update flake.nix
+            - name: Compute hash for ${{ matrix.platform }}
+              run: |
+                  VERSION="v${{ needs.release.outputs.new_release_version }}"
+                  echo "🔨 Computing hash for platform: ${{ matrix.platform }}"
+
+                  # Update version
+                  sed -i "s/version = \".*\";/version = \"${VERSION}\";/" flake.nix
+                  echo "✅ Updated version to: $VERSION"
+
+                  # Build to get correct hash
+                  MAX_ATTEMPTS=3
+                  HASH=""
+
+                  for attempt in $(seq 1 $MAX_ATTEMPTS); do
+                    echo "🔨 Build attempt $attempt/$MAX_ATTEMPTS for ${{ matrix.platform }}..."
+                    nix_output=$(nix build --print-out-paths .#packages.${{ matrix.platform }}.default 2>&1 || true)
+
+                    # Try multiple patterns to extract hash
+                    if [[ -z "$HASH" ]]; then
+                      HASH=$(echo "$nix_output" | grep -oP '(?<=got:\s{0,5})sha256-[A-Za-z0-9+/=]{44}' | head -n1)
+                      [[ -n "$HASH" ]] && echo "✅ Extracted hash using pattern 1 (got: ...): $HASH"
+                    fi
+
+                    if [[ -z "$HASH" ]]; then
+                      HASH=$(echo "$nix_output" | grep -oP '(?<=got\s{1,5})sha256-[A-Za-z0-9+/=]{44}' | head -n1)
+                      [[ -n "$HASH" ]] && echo "✅ Extracted hash using pattern 2 (got ...): $HASH"
+                    fi
+
+                    if [[ -z "$HASH" ]]; then
+                      HASH=$(echo "$nix_output" | grep -oP 'sha256-[A-Za-z0-9+/=]{44}' | grep -v "PLACEHOLDER" | head -n1)
+                      [[ -n "$HASH" ]] && echo "✅ Extracted hash using pattern 3 (any sha256): $HASH"
+                    fi
+
+                    if [[ -n "$HASH" && "$HASH" != *"PLACEHOLDER"* ]]; then
+                      echo "✅ Successfully extracted hash: $HASH"
+                      break
+                    fi
+
+                    HASH=""
+                    echo "⚠️  Attempt $attempt failed to extract valid hash"
+                    if [[ $attempt -lt $MAX_ATTEMPTS ]]; then
+                      echo "🔄 Retrying in 5 seconds..."
+                      sleep 5
+                    fi
+                  done
+
+                  if [[ -z "$HASH" || "$HASH" == *"PLACEHOLDER"* ]]; then
+                    echo "❌ Failed to extract valid hash after $MAX_ATTEMPTS attempts"
+                    echo "📋 Nix build output:"
+                    echo "$nix_output"
+                    exit 1
+                  fi
+
+                  # Save hash to artifact
+                  echo "${{ matrix.platform }}=${HASH}" >> hashes.txt
+                  echo "✅ Computed hash for ${{ matrix.platform }}: $HASH"
+
+            - name: Upload hash artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: hashes-${{ matrix.platform }}
+                  path: hashes.txt
+
+    update-nix:
+        name: Update Nix Flake
+        needs: [release, compute-hashes]
+        if: needs.release.outputs.new_release_published == 'true'
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+              with:
+                  token: ${{ secrets.PAT_TOKEN }}
+                  ref: main
+
+            - name: Install Nix
+              uses: cachix/install-nix-action@v26
+              with:
+                  nix_path: nixpkgs=channel:nixos-unstable
+                  extra_nix_config: |
+                      experimental-features = nix-command flakes
+
+            - name: Download all hash artifacts
+              uses: actions/download-artifact@v4
+              with:
+                  path: hashes
+
+            - name: Combine and update hashes
               run: |
                   VERSION="v${{ needs.release.outputs.new_release_version }}"
                   echo "📦 Updating flake.nix to version: $VERSION"
@@ -91,70 +196,28 @@ jobs:
                   cp flake.nix flake.nix.backup
                   echo "💾 Created backup: flake.nix.backup"
 
+                  # Collect all hashes
+                  for hash_file in hashes/hashes-*/hashes.txt; do
+                    cat "$hash_file" >> combined_hashes.txt
+                  done
+
+                  echo "📋 Collected hashes:"
+                  cat combined_hashes.txt
+
                   # Update version
                   sed -i "s/version = \".*\";/version = \"${VERSION}\";/" flake.nix
                   echo "✅ Updated version to: $VERSION"
 
-                  # Force invalid hash to trigger mismatch
-                  sed -i 's|hash = "sha256-.*";|hash = "sha256-INVALIDHASHPLACEHOLDER000000000000000000000=";|' flake.nix
-                  echo "🔄 Set invalid hash to trigger recalculation"
-
-                  # Build to get correct hash with retry logic
-                  MAX_ATTEMPTS=3
-                  HASH=""
-
-                  for attempt in $(seq 1 $MAX_ATTEMPTS); do
-                    echo "🔨 Build attempt $attempt/$MAX_ATTEMPTS..."
-                    nix_output=$(nix build --print-out-paths .#packages.x86_64-linux.default 2>&1 || true)
-
-                    # Try multiple patterns to extract hash (improved from update_flake.yml)
-                    # Pattern 1: "got: sha256-..." or "got:sha256-..."
-                    if [[ -z "$HASH" ]]; then
-                      HASH=$(echo "$nix_output" | grep -oP '(?<=got:\s{0,5})sha256-[A-Za-z0-9+/=]{44}' | head -n1)
-                      [[ -n "$HASH" ]] && echo "✅ Extracted hash using pattern 1 (got: ...): $HASH"
+                  # Update each platform's hash
+                  while IFS='=' read -r platform hash; do
+                    if [[ -n "$platform" && -n "$hash" ]]; then
+                      sed -i "s|${platform} = \"sha256-[^\"]*\";|${platform} = \"${hash}\";|" flake.nix
+                      echo "✅ Updated hash for ${platform}"
                     fi
-
-                    # Pattern 2: "got sha256-..." (without colon)
-                    if [[ -z "$HASH" ]]; then
-                      HASH=$(echo "$nix_output" | grep -oP '(?<=got\s{1,5})sha256-[A-Za-z0-9+/=]{44}' | head -n1)
-                      [[ -n "$HASH" ]] && echo "✅ Extracted hash using pattern 2 (got ...): $HASH"
-                    fi
-
-                    # Pattern 3: Any sha256 hash (fallback)
-                    if [[ -z "$HASH" ]]; then
-                      HASH=$(echo "$nix_output" | grep -oP 'sha256-[A-Za-z0-9+/=]{44}' | grep -v "INVALIDHASHPLACEHOLDER" | head -n1)
-                      [[ -n "$HASH" ]] && echo "✅ Extracted hash using pattern 3 (any sha256): $HASH"
-                    fi
-
-                    if [[ -n "$HASH" && "$HASH" != *"INVALID"* ]]; then
-                      echo "✅ Successfully extracted hash: $HASH"
-                      break
-                    fi
-
-                    HASH=""  # Reset for next attempt
-                    echo "⚠️  Attempt $attempt failed to extract valid hash"
-                    if [[ $attempt -lt $MAX_ATTEMPTS ]]; then
-                      echo "🔄 Retrying in 5 seconds..."
-                      sleep 5
-                    fi
-                  done
-
-                  # Validate hash was extracted
-                  if [[ -z "$HASH" || "$HASH" == *"INVALID"* ]]; then
-                    echo "❌ Failed to extract valid hash after $MAX_ATTEMPTS attempts"
-                    echo "📋 Nix build output:"
-                    echo "$nix_output"
-                    echo "🔙 Restoring backup..."
-                    mv flake.nix.backup flake.nix
-                    exit 1
-                  fi
-
-                  # Update with correct hash
-                  sed -i "s|hash = \"sha256-.*\";|hash = \"${HASH}\";|" flake.nix
-                  echo "✅ Updated hash: $HASH"
+                  done < combined_hashes.txt
 
                   # Validate the updated flake
-                  echo "🔍 Validating flake.nix..."
+                  echo "🔍 Validating flake.nix syntax..."
                   if ! nix flake check --no-build 2>&1; then
                     echo "❌ Flake validation failed"
                     echo "🔙 Restoring backup..."
@@ -170,7 +233,7 @@ jobs:
                   echo "📝 Changes made:"
                   git diff flake.nix
 
-                  echo "✅ Update complete: $VERSION with hash $HASH"
+                  echo "✅ Update complete: $VERSION"
 
             - name: Commit and push
               run: |

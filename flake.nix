@@ -23,7 +23,12 @@
           pnpmDeps = pkgs.pnpm.fetchDeps {
             inherit (finalAttrs) pname version src;
             fetcherVersion = 1;
-            hash = "sha256-96/qySx4dKfVCoIgwKXv6c7B3AG0S1HbLxt86/y/qTw=";
+            hash = {
+              x86_64-linux = "sha256-96/qySx4dKfVCoIgwKXv6c7B3AG0S1HbLxt86/y/qTw=";
+              aarch64-linux = "sha256-111111111111111111111111111111111111111111111111=";
+              x86_64-darwin = "sha256-111111111111111111111111111111111111111111111111=";
+              aarch64-darwin = "sha256-111111111111111111111111111111111111111111111111=";
+            }.${pkgs.stdenv.hostPlatform.system} or (throw "No hash defined for system ${pkgs.stdenv.hostPlatform.system}");
           };
 
           nativeBuildInputs = [
